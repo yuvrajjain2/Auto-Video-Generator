@@ -5,7 +5,6 @@ Ensures robust retry rules, image failovers with Pillow, and a rigorous 3-layer 
 """
 
 import os
-import urllib.parse
 import requests
 import asyncio
 import edge_tts
@@ -15,74 +14,55 @@ import supabase_client
 
 def generate_background_images(visual_prompts: list) -> list:
     """
-    Downloads custom 1080x1920 background images from Pollinations AI.
-    If image download fails after 3 attempts, generates a local solid black failover image.
+    Generates cinematic 1080x1920 background images locally using Pillow gradients.
+    Each scene receives a unique, vibrant gradient palette — no external API or internet required.
+    This approach is 100% reliable, fast, and produces consistent results on any runner.
     """
-    print("🎨 Asset Builder: Generating background images...")
+    print("🎨 Asset Builder: Generating local cinematic gradient backgrounds...")
     saved_paths = []
-    import time
-    import random
-    
+
+    # Curated cinematic gradient palettes — (top_color_RGB, bottom_color_RGB)
+    GRADIENT_PALETTES = [
+        ((15, 10, 40),   (60, 20, 100)),   # Deep Violet → Purple
+        ((5, 15, 50),    (20, 80, 140)),    # Midnight Blue → Ocean Blue
+        ((40, 5, 20),    (110, 20, 60)),    # Dark Crimson → Magenta
+        ((5, 35, 30),    (10, 90, 70)),     # Dark Forest → Emerald
+        ((40, 20, 5),    (120, 60, 10)),    # Dark Bronze → Amber
+        ((10, 10, 60),   (50, 10, 90)),     # Indigo → Royal Purple
+        ((35, 5, 35),    (90, 15, 90)),     # Deep Plum → Orchid
+        ((5, 40, 50),    (10, 100, 120)),   # Dark Teal → Cyan
+        ((50, 10, 10),   (140, 40, 20)),    # Dark Ruby → Coral
+        ((20, 20, 20),   (60, 60, 80)),     # Charcoal → Slate
+    ]
+
     for idx, vp in enumerate(visual_prompts):
         prompt_id = vp["id"]
-        prompt_text = vp["prompt"]
         filename = f"bg_{prompt_id}.jpg"
         filepath = os.path.join(config.ASSETS_DIR, filename)
-        
-        # Avoid rate limiting by introducing a 4-second sleep between requests
-        if idx > 0:
-            print("🎨 Asset Builder: Sleeping 4 seconds before next Pollinations AI image generation to avoid rate limits...")
-            time.sleep(4)
-            
-        encoded_prompt = urllib.parse.quote(prompt_text)
-        seed = random.randint(1, 999999)
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}"
-        
-        success = False
-        print(f"🎨 Asset Builder: Downloading image {prompt_id} from Pollinations AI...")
-        
-        # 3 Retry Attempts
-        for attempt in range(1, 4):
-            try:
-                response = requests.get(url, timeout=20)
-                if response.status_code == 200 and len(response.content) > 10000:
-                    with open(filepath, "wb") as f:
-                        f.write(response.content)
-                    print(f"✅ Asset Builder: Saved bg_{prompt_id}.jpg successfully on attempt {attempt}.")
-                    saved_paths.append(filepath)
-                    success = True
-                    break
-                else:
-                    print(f"⚠️ Asset Builder: Attempt {attempt} for image {prompt_id} returned empty or bad status: {response.status_code}")
-            except Exception as e:
-                print(f"⚠️ Asset Builder: Attempt {attempt} for image {prompt_id} raised exception: {e}")
-        
-        # Fallback to Premium Dark Tech Gradient Canvas via Pillow
-        if not success:
-            print(f"❌ Asset Builder: Failed to download image {prompt_id} after 3 attempts. Utilizing premium tech gradient fallback.")
-            try:
-                # Create a stunning vertical gradient (Dark Purple/Violet to Dark Tech Blue)
-                img = Image.new('RGB', (1080, 1920))
-                for y in range(1920):
-                    ratio = y / 1920.0
-                    r = int(32 * (1 - ratio) + 12 * ratio)
-                    g = int(12 * (1 - ratio) + 24 * ratio)
-                    b = int(52 * (1 - ratio) + 56 * ratio)
-                    img.paste((r, g, b), [0, y, 1080, y + 1])
-                img.save(filepath, "JPEG")
-                print(f"✅ Asset Builder: Programmatically created premium dark gradient background: {filepath}")
-                saved_paths.append(filepath)
-            except Exception as pillow_err:
-                # Basic black fallback as absolute last resort
-                try:
-                    img = Image.new('RGB', (1080, 1920), color='black')
-                    img.save(filepath, "JPEG")
-                    saved_paths.append(filepath)
-                except Exception as ex:
-                    err_msg = f"Failed to create Pillow gradient and black fallbacks: {ex}"
-                    print(f"❌ Asset Builder: {err_msg}")
-                    supabase_client.send_telegram_alert(err_msg)
-                
+
+        palette_idx = idx % len(GRADIENT_PALETTES)
+        top_rgb, bot_rgb = GRADIENT_PALETTES[palette_idx]
+
+        print(f"🎨 Asset Builder: Creating gradient background {prompt_id} (palette {palette_idx + 1})...")
+
+        try:
+            img = Image.new('RGB', (1080, 1920))
+            pixels = img.load()
+            for y in range(1920):
+                ratio = y / 1919.0
+                r = int(top_rgb[0] * (1 - ratio) + bot_rgb[0] * ratio)
+                g = int(top_rgb[1] * (1 - ratio) + bot_rgb[1] * ratio)
+                b = int(top_rgb[2] * (1 - ratio) + bot_rgb[2] * ratio)
+                for x in range(1080):
+                    pixels[x, y] = (r, g, b)
+            img.save(filepath, "JPEG", quality=95)
+            print(f"✅ Asset Builder: Gradient background saved: {filename}")
+            saved_paths.append(filepath)
+        except Exception as e:
+            err_msg = f"Failed to generate gradient background for {prompt_id}: {e}"
+            print(f"❌ Asset Builder: {err_msg}")
+            supabase_client.send_telegram_alert(err_msg)
+
     return saved_paths
 
 def fetch_brand_logo(brand_keyword: str, brand_domain: str) -> str:

@@ -1,8 +1,7 @@
 """
 Asset Builder module for the Video automation pipeline.
-Downloads Pexels stock photos for scene backgrounds, fetches brand logos via Clearbit/Google,
-generates TTS voice narration via edge-tts, and downloads background music.
-Pillow gradient is used as a guaranteed fallback if Pexels fails.
+Downloads real Pexels stock photos for scene backgrounds using Gemini-generated search queries.
+Fetches brand logos via Clearbit/Google, generates TTS voice via edge-tts, and downloads background music.
 """
 
 import os
@@ -13,16 +12,16 @@ from PIL import Image
 import config
 import supabase_client
 
-def _pexels_search_photo(keyword: str, pexels_api_key: str, orientation: str = "portrait") -> str | None:
+def _pexels_fetch_photo(query: str, pexels_api_key: str) -> str | None:
     """
-    Searches Pexels for a photo matching the keyword.
-    Returns the best-quality portrait image URL, or None on failure.
+    Searches Pexels for a portrait photo matching the query.
+    Returns the highest-quality image URL, or None on failure.
     """
     try:
         headers = {"Authorization": pexels_api_key}
         params = {
-            "query": keyword,
-            "orientation": orientation,
+            "query": query,
+            "orientation": "portrait",
             "size": "large",
             "per_page": 5
         }
@@ -30,125 +29,108 @@ def _pexels_search_photo(keyword: str, pexels_api_key: str, orientation: str = "
         if resp.status_code == 200:
             photos = resp.json().get("photos", [])
             if photos:
-                # Pick the portrait photo with best resolution
                 photo = photos[0]
-                # Use large2x for highest quality, fallback to large
                 return photo["src"].get("large2x") or photo["src"].get("large")
-        print(f"⚠️ Pexels: Status {resp.status_code} for query '{keyword}'")
+        print(f"⚠️ Pexels: Status {resp.status_code} for query '{query}'")
     except Exception as e:
-        print(f"⚠️ Pexels: Exception searching for '{keyword}': {e}")
+        print(f"⚠️ Pexels: Exception searching for '{query}': {e}")
     return None
 
 
-def _make_gradient_fallback(filepath: str, palette_idx: int):
+def _download_and_crop_pexels_photo(photo_url: str, filepath: str) -> bool:
     """
-    Generates a cinematic dark gradient image using Pillow as a reliable fallback.
+    Downloads a Pexels photo URL and center-crops + resizes it to 1080x1920 portrait.
+    Returns True on success, False on failure.
     """
-    GRADIENT_PALETTES = [
-        ((15, 10, 40),  (60, 20, 100)),   # Deep Violet → Purple
-        ((5, 15, 50),   (20, 80, 140)),   # Midnight Blue → Ocean Blue
-        ((40, 5, 20),   (110, 20, 60)),   # Dark Crimson → Magenta
-        ((5, 35, 30),   (10, 90, 70)),    # Dark Forest → Emerald
-        ((40, 20, 5),   (120, 60, 10)),   # Dark Bronze → Amber
-        ((10, 10, 60),  (50, 10, 90)),    # Indigo → Royal Purple
-        ((35, 5, 35),   (90, 15, 90)),    # Deep Plum → Orchid
-        ((5, 40, 50),   (10, 100, 120)),  # Dark Teal → Cyan
-        ((50, 10, 10),  (140, 40, 20)),   # Dark Ruby → Coral
-        ((20, 20, 20),  (60, 60, 80)),    # Charcoal → Slate
-    ]
-    top_rgb, bot_rgb = GRADIENT_PALETTES[palette_idx % len(GRADIENT_PALETTES)]
-    img = Image.new('RGB', (1080, 1920))
-    pixels = img.load()
-    for y in range(1920):
-        ratio = y / 1919.0
-        r = int(top_rgb[0] * (1 - ratio) + bot_rgb[0] * ratio)
-        g = int(top_rgb[1] * (1 - ratio) + bot_rgb[1] * ratio)
-        b = int(top_rgb[2] * (1 - ratio) + bot_rgb[2] * ratio)
-        for x in range(1080):
-            pixels[x, y] = (r, g, b)
-    img.save(filepath, "JPEG", quality=95)
+    try:
+        from io import BytesIO
+        img_resp = requests.get(photo_url, timeout=25)
+        if img_resp.status_code != 200 or len(img_resp.content) < 10000:
+            print(f"⚠️ Pexels: Download returned bad status {img_resp.status_code} or file too small.")
+            return False
+        pil_img = Image.open(BytesIO(img_resp.content)).convert("RGB")
+        orig_w, orig_h = pil_img.size
+        target_ratio = 1080 / 1920  # 9:16 portrait
+        orig_ratio = orig_w / orig_h
+        if orig_ratio > target_ratio:
+            # Wider than 9:16 → crop sides
+            new_w = int(orig_h * target_ratio)
+            left = (orig_w - new_w) // 2
+            pil_img = pil_img.crop((left, 0, left + new_w, orig_h))
+        else:
+            # Taller than 9:16 → crop top/bottom
+            new_h = int(orig_w / target_ratio)
+            top = (orig_h - new_h) // 2
+            pil_img = pil_img.crop((0, top, orig_w, top + new_h))
+        pil_img = pil_img.resize((1080, 1920), Image.LANCZOS)
+        pil_img.save(filepath, "JPEG", quality=92)
+        return True
+    except Exception as e:
+        print(f"⚠️ Pexels: Image processing exception: {e}")
+        return False
 
 
-def generate_background_images(visual_prompts: list) -> list:
+def generate_background_images(visual_prompts: list, brand_keyword: str = "") -> list:
     """
-    Downloads real 1080x1920 stock photos from Pexels for each scene background.
-    Uses the scene's visual prompt keywords to search for a matching photo.
-    Falls back to a local Pillow gradient if Pexels fails — guarantees no black screens.
+    Downloads real 1080x1920 stock photos from Pexels for every scene.
+    Uses the Gemini-generated 'prompt' field directly as the Pexels search query.
+    Multi-level fallback strategy:
+      1. Gemini's exact pexels query (e.g., 'ocean waves aerial')
+      2. First single word of the query
+      3. Brand keyword (topic of the video)
+      4. 'technology' (universal last resort)
+    Raises RuntimeError if ANY scene fails — no silent black screens.
     """
-    print("🎨 Asset Builder: Fetching Pexels stock photos for scene backgrounds...")
+    print("🎨 Asset Builder: Fetching Pexels stock photos for all scenes...")
     saved_paths = []
 
     pexels_api_key = config.PEXELS_API_KEY
     if not pexels_api_key:
-        print("⚠️ Asset Builder: PEXELS_API_KEY not set — using Pillow gradient fallback for all scenes.")
+        raise RuntimeError("PEXELS_API_KEY is not set. Cannot generate scene backgrounds.")
 
     for idx, vp in enumerate(visual_prompts):
         prompt_id = vp["id"]
-        prompt_text = vp.get("prompt", "")
+        # Gemini now generates prompt as a Pexels search query directly
+        pexels_query = vp.get("prompt", "").strip()
         filename = f"bg_{prompt_id}.jpg"
         filepath = os.path.join(config.ASSETS_DIR, filename)
 
+        # Build a smart fallback chain for this scene
+        first_word = pexels_query.split()[0] if pexels_query else ""
+        search_chain = [
+            pexels_query,                           # Level 1: Gemini's exact Pexels query
+            first_word,                             # Level 2: First keyword only
+            brand_keyword if brand_keyword else "",  # Level 3: Video topic/brand
+            "technology",                           # Level 4: Universal fallback
+        ]
+        # Remove duplicates and empty strings while preserving order
+        seen = set()
+        unique_chain = []
+        for kw in search_chain:
+            kw = kw.strip()
+            if kw and kw.lower() not in seen:
+                seen.add(kw.lower())
+                unique_chain.append(kw)
+
         success = False
-
-        # ━━━ LAYER 1: Pexels API ━━━
-        if pexels_api_key:
-            # Extract a clean 2-3 word keyword from the prompt for better Pexels results
-            # Take first 4 words of the prompt as the search keyword
-            keyword_words = prompt_text.strip().split()[:4]
-            keyword = " ".join(keyword_words) if keyword_words else "cinematic"
-            print(f"🖼️ Pexels: Searching for scene {prompt_id} → '{keyword}'...")
-
-            photo_url = _pexels_search_photo(keyword, pexels_api_key)
-
-            # If no result, try a shorter 2-word fallback keyword
-            if not photo_url and len(keyword_words) > 2:
-                short_keyword = " ".join(keyword_words[:2])
-                print(f"🖼️ Pexels: Retrying with shorter keyword → '{short_keyword}'...")
-                photo_url = _pexels_search_photo(short_keyword, pexels_api_key)
-
+        for level, keyword in enumerate(unique_chain, start=1):
+            print(f"🖼️ Pexels: Scene {prompt_id} — Level {level} search: '{keyword}'...")
+            photo_url = _pexels_fetch_photo(keyword, pexels_api_key)
             if photo_url:
-                try:
-                    img_resp = requests.get(photo_url, timeout=20)
-                    if img_resp.status_code == 200 and len(img_resp.content) > 10000:
-                        # Download and crop/resize to exact 1080x1920 portrait
-                        from io import BytesIO
-                        pil_img = Image.open(BytesIO(img_resp.content)).convert("RGB")
-                        # Smart crop: center-crop to 9:16 ratio then resize
-                        orig_w, orig_h = pil_img.size
-                        target_ratio = 1080 / 1920  # 9:16
-                        orig_ratio = orig_w / orig_h
-                        if orig_ratio > target_ratio:
-                            # Image is wider → crop sides
-                            new_w = int(orig_h * target_ratio)
-                            left = (orig_w - new_w) // 2
-                            pil_img = pil_img.crop((left, 0, left + new_w, orig_h))
-                        else:
-                            # Image is taller → crop top/bottom
-                            new_h = int(orig_w / target_ratio)
-                            top = (orig_h - new_h) // 2
-                            pil_img = pil_img.crop((0, top, orig_w, top + new_h))
-                        pil_img = pil_img.resize((1080, 1920), Image.LANCZOS)
-                        pil_img.save(filepath, "JPEG", quality=92)
-                        print(f"✅ Pexels: Saved scene {prompt_id} background from Pexels stock photo.")
-                        saved_paths.append(filepath)
-                        success = True
-                    else:
-                        print(f"⚠️ Pexels: Photo download returned bad status or small file for scene {prompt_id}.")
-                except Exception as e:
-                    print(f"⚠️ Pexels: Photo processing failed for scene {prompt_id}: {e}")
+                downloaded = _download_and_crop_pexels_photo(photo_url, filepath)
+                if downloaded:
+                    print(f"✅ Pexels: Scene {prompt_id} saved (query: '{keyword}').")
+                    saved_paths.append(filepath)
+                    success = True
+                    break
 
-        # ━━━ LAYER 2: Pillow Gradient Fallback ━━━
         if not success:
-            print(f"🎨 Asset Builder: Using Pillow gradient fallback for scene {prompt_id} (palette {(idx % 10) + 1})...")
-            try:
-                _make_gradient_fallback(filepath, idx)
-                print(f"✅ Asset Builder: Gradient fallback saved for scene {prompt_id}.")
-                saved_paths.append(filepath)
-            except Exception as e:
-                err_msg = f"Failed to generate gradient fallback for scene {prompt_id}: {e}"
-                print(f"❌ Asset Builder: {err_msg}")
-                supabase_client.send_telegram_alert(err_msg)
+            err_msg = f"Pexels: ALL search levels failed for scene {prompt_id}. Cannot generate background."
+            print(f"❌ Asset Builder: {err_msg}")
+            supabase_client.send_telegram_alert(err_msg)
+            raise RuntimeError(err_msg)
 
+    print(f"✅ Asset Builder: All {len(saved_paths)} scene backgrounds fetched from Pexels.")
     return saved_paths
 
 def fetch_brand_logo(brand_keyword: str, brand_domain: str) -> str:

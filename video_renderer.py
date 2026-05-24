@@ -363,7 +363,7 @@ def render_video(job_id: str):
         
         # Download Assets
         print("🎬 Runner: Pulling visual resources...")
-        bg_paths = asset_builder.generate_background_images(gemini_json["visual_prompts"])
+        bg_paths = asset_builder.generate_background_images(gemini_json["visual_prompts"], brand_keyword=gemini_json.get("brand_keyword", ""))
         logo_path = asset_builder.fetch_brand_logo(gemini_json["brand_keyword"], gemini_json["brand_domain"])
         
         print("🎬 Runner: Generating voice narration...")

@@ -28,7 +28,10 @@ CRITICAL CONTENT RULES — FOLLOW STRICTLY:
 3. Every single claim in your script must be directly verifiable from the article text.
 4. Extract the brand website domain from the article text if it is mentioned. If not mentioned, set brand_domain as the brand name in lowercase with .com appended.
 5. Do NOT hallucinate features, prices, dates, or statistics that are not in the article.
-6. SAFE IMAGE GENERATION RULES: The image prompts in 'visual_prompts' must be entirely safe, clean, and positive. Do NOT use sensitive, warning, or suspicious words like: hacker, exploit, gaslight, attack, danger, malicious, fake, vulnerable, grandmother, dark, hazard. Instead, represent technical or security concepts using bright, premium, highly aesthetic, futuristic, or abstract designs (e.g., glowing safe shield, high-tech server racks, clean abstract fiber optic data flows).
+6. VISUAL PROMPT RULES: Each visual_prompt must have TWO fields:
+   a) 'prompt': A short, specific Pexels stock photo search query (2-4 words maximum). This will be used to search Pexels.com for a real stock photo. Choose words that will return high-quality, relevant real-world photos. EXAMPLES: 'ocean waves aerial', 'city skyline night', 'scientist laboratory', 'business meeting boardroom', 'mountain sunrise landscape', 'ai robot futuristic', 'smartphone app screen', 'athlete running track'.
+   b) 'scene_description': One sentence describing what should visually appear in this scene.
+   The 'prompt' field is the MOST IMPORTANT — it must be a focused, real-world searchable query that matches the video topic.
 
 OUTPUT FORMAT RULES:
 Your output must be a single raw JSON object.
@@ -60,7 +63,8 @@ JSON Schema (follow exactly):
   "visual_prompts": [
     {
       "id": 1,
-      "prompt": "string — ultra detailed cinematic background image generation prompt. Style: cinematic, 8K, photorealistic. No text. No logos. No watermarks. No UI elements. Pure visual scene only."
+      "prompt": "string — 2-4 word Pexels stock photo search query matching this scene topic. Real-world searchable. Example: 'ocean waves aerial'",
+      "scene_description": "string — one sentence describing the visual scene"
     }
   ]
 }
@@ -71,7 +75,9 @@ SCRIPT RULES:
 - script_lines and visual_prompts must have exact same array length and matching ids
 - First line must hook viewer in first 3 seconds
 - Use energetic fast-paced Shorts style
-- Never mention facts not in the article"""
+- Never mention facts not in the article
+- The 'prompt' in each visual_prompt must be a SPECIFIC, FOCUSED Pexels search query (not a generic AI image prompt)
+- Match each 'prompt' to the actual content being spoken in that scene"""
 
 def clean_and_parse_json(text: str) -> dict:
     """

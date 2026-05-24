@@ -28,6 +28,7 @@ CRITICAL CONTENT RULES — FOLLOW STRICTLY:
 3. Every single claim in your script must be directly verifiable from the article text.
 4. Extract the brand website domain from the article text if it is mentioned. If not mentioned, set brand_domain as the brand name in lowercase with .com appended.
 5. Do NOT hallucinate features, prices, dates, or statistics that are not in the article.
+6. SAFE IMAGE GENERATION RULES: The image prompts in 'visual_prompts' must be entirely safe, clean, and positive. Do NOT use sensitive, warning, or suspicious words like: hacker, exploit, gaslight, attack, danger, malicious, fake, vulnerable, grandmother, dark, hazard. Instead, represent technical or security concepts using bright, premium, highly aesthetic, futuristic, or abstract designs (e.g., glowing safe shield, high-tech server racks, clean abstract fiber optic data flows).
 
 OUTPUT FORMAT RULES:
 Your output must be a single raw JSON object.

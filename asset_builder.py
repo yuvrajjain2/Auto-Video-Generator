@@ -57,18 +57,31 @@ def generate_background_images(visual_prompts: list) -> list:
             except Exception as e:
                 print(f"⚠️ Asset Builder: Attempt {attempt} for image {prompt_id} raised exception: {e}")
         
-        # Fallback to Solid Black Canvas via Pillow
+        # Fallback to Premium Dark Tech Gradient Canvas via Pillow
         if not success:
-            print(f"❌ Asset Builder: Failed to download image {prompt_id} after 3 attempts. Utilizing solid black fallback.")
+            print(f"❌ Asset Builder: Failed to download image {prompt_id} after 3 attempts. Utilizing premium tech gradient fallback.")
             try:
-                img = Image.new('RGB', (1080, 1920), color='black')
+                # Create a stunning vertical gradient (Dark Purple/Violet to Dark Tech Blue)
+                img = Image.new('RGB', (1080, 1920))
+                for y in range(1920):
+                    ratio = y / 1920.0
+                    r = int(32 * (1 - ratio) + 12 * ratio)
+                    g = int(12 * (1 - ratio) + 24 * ratio)
+                    b = int(52 * (1 - ratio) + 56 * ratio)
+                    img.paste((r, g, b), [0, y, 1080, y + 1])
                 img.save(filepath, "JPEG")
-                print(f"✅ Asset Builder: Programmatically created black background: {filepath}")
+                print(f"✅ Asset Builder: Programmatically created premium dark gradient background: {filepath}")
                 saved_paths.append(filepath)
             except Exception as pillow_err:
-                err_msg = f"Failed to create Pillow black image fallback: {pillow_err}"
-                print(f"❌ Asset Builder: {err_msg}")
-                supabase_client.send_telegram_alert(err_msg)
+                # Basic black fallback as absolute last resort
+                try:
+                    img = Image.new('RGB', (1080, 1920), color='black')
+                    img.save(filepath, "JPEG")
+                    saved_paths.append(filepath)
+                except Exception as ex:
+                    err_msg = f"Failed to create Pillow gradient and black fallbacks: {ex}"
+                    print(f"❌ Asset Builder: {err_msg}")
+                    supabase_client.send_telegram_alert(err_msg)
                 
     return saved_paths
 

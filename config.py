@@ -67,6 +67,7 @@ YOUTUBE_REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN")
 GITHUB_PAT = os.environ.get("GITHUB_PAT")
 GITHUB_REPO_OWNER = os.environ.get("GITHUB_REPO_OWNER")
 GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO_NAME")
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY")
 
 def validate_config():
     """
@@ -84,7 +85,8 @@ def validate_config():
         "YOUTUBE_REFRESH_TOKEN": YOUTUBE_REFRESH_TOKEN,
         "GITHUB_PAT": GITHUB_PAT,
         "GITHUB_REPO_OWNER": GITHUB_REPO_OWNER,
-        "GITHUB_REPO_NAME": GITHUB_REPO_NAME
+        "GITHUB_REPO_NAME": GITHUB_REPO_NAME,
+        "PEXELS_API_KEY": PEXELS_API_KEY
     }
     
     missing = [k for k, v in required_keys.items() if not v]

@@ -1,7 +1,8 @@
 """
 Asset Builder module for the Video automation pipeline.
-Generates or downloads all required physical media (background images, brand logos, TTS voices, background music) locally.
-Ensures robust retry rules, image failovers with Pillow, and a rigorous 3-layer logo API search.
+Downloads Pexels stock photos for scene backgrounds, fetches brand logos via Clearbit/Google,
+generates TTS voice narration via edge-tts, and downloads background music.
+Pillow gradient is used as a guaranteed fallback if Pexels fails.
 """
 
 import os
@@ -12,56 +13,141 @@ from PIL import Image
 import config
 import supabase_client
 
+def _pexels_search_photo(keyword: str, pexels_api_key: str, orientation: str = "portrait") -> str | None:
+    """
+    Searches Pexels for a photo matching the keyword.
+    Returns the best-quality portrait image URL, or None on failure.
+    """
+    try:
+        headers = {"Authorization": pexels_api_key}
+        params = {
+            "query": keyword,
+            "orientation": orientation,
+            "size": "large",
+            "per_page": 5
+        }
+        resp = requests.get("https://api.pexels.com/v1/search", headers=headers, params=params, timeout=15)
+        if resp.status_code == 200:
+            photos = resp.json().get("photos", [])
+            if photos:
+                # Pick the portrait photo with best resolution
+                photo = photos[0]
+                # Use large2x for highest quality, fallback to large
+                return photo["src"].get("large2x") or photo["src"].get("large")
+        print(f"⚠️ Pexels: Status {resp.status_code} for query '{keyword}'")
+    except Exception as e:
+        print(f"⚠️ Pexels: Exception searching for '{keyword}': {e}")
+    return None
+
+
+def _make_gradient_fallback(filepath: str, palette_idx: int):
+    """
+    Generates a cinematic dark gradient image using Pillow as a reliable fallback.
+    """
+    GRADIENT_PALETTES = [
+        ((15, 10, 40),  (60, 20, 100)),   # Deep Violet → Purple
+        ((5, 15, 50),   (20, 80, 140)),   # Midnight Blue → Ocean Blue
+        ((40, 5, 20),   (110, 20, 60)),   # Dark Crimson → Magenta
+        ((5, 35, 30),   (10, 90, 70)),    # Dark Forest → Emerald
+        ((40, 20, 5),   (120, 60, 10)),   # Dark Bronze → Amber
+        ((10, 10, 60),  (50, 10, 90)),    # Indigo → Royal Purple
+        ((35, 5, 35),   (90, 15, 90)),    # Deep Plum → Orchid
+        ((5, 40, 50),   (10, 100, 120)),  # Dark Teal → Cyan
+        ((50, 10, 10),  (140, 40, 20)),   # Dark Ruby → Coral
+        ((20, 20, 20),  (60, 60, 80)),    # Charcoal → Slate
+    ]
+    top_rgb, bot_rgb = GRADIENT_PALETTES[palette_idx % len(GRADIENT_PALETTES)]
+    img = Image.new('RGB', (1080, 1920))
+    pixels = img.load()
+    for y in range(1920):
+        ratio = y / 1919.0
+        r = int(top_rgb[0] * (1 - ratio) + bot_rgb[0] * ratio)
+        g = int(top_rgb[1] * (1 - ratio) + bot_rgb[1] * ratio)
+        b = int(top_rgb[2] * (1 - ratio) + bot_rgb[2] * ratio)
+        for x in range(1080):
+            pixels[x, y] = (r, g, b)
+    img.save(filepath, "JPEG", quality=95)
+
+
 def generate_background_images(visual_prompts: list) -> list:
     """
-    Generates cinematic 1080x1920 background images locally using Pillow gradients.
-    Each scene receives a unique, vibrant gradient palette — no external API or internet required.
-    This approach is 100% reliable, fast, and produces consistent results on any runner.
+    Downloads real 1080x1920 stock photos from Pexels for each scene background.
+    Uses the scene's visual prompt keywords to search for a matching photo.
+    Falls back to a local Pillow gradient if Pexels fails — guarantees no black screens.
     """
-    print("🎨 Asset Builder: Generating local cinematic gradient backgrounds...")
+    print("🎨 Asset Builder: Fetching Pexels stock photos for scene backgrounds...")
     saved_paths = []
 
-    # Curated cinematic gradient palettes — (top_color_RGB, bottom_color_RGB)
-    GRADIENT_PALETTES = [
-        ((15, 10, 40),   (60, 20, 100)),   # Deep Violet → Purple
-        ((5, 15, 50),    (20, 80, 140)),    # Midnight Blue → Ocean Blue
-        ((40, 5, 20),    (110, 20, 60)),    # Dark Crimson → Magenta
-        ((5, 35, 30),    (10, 90, 70)),     # Dark Forest → Emerald
-        ((40, 20, 5),    (120, 60, 10)),    # Dark Bronze → Amber
-        ((10, 10, 60),   (50, 10, 90)),     # Indigo → Royal Purple
-        ((35, 5, 35),    (90, 15, 90)),     # Deep Plum → Orchid
-        ((5, 40, 50),    (10, 100, 120)),   # Dark Teal → Cyan
-        ((50, 10, 10),   (140, 40, 20)),    # Dark Ruby → Coral
-        ((20, 20, 20),   (60, 60, 80)),     # Charcoal → Slate
-    ]
+    pexels_api_key = config.PEXELS_API_KEY
+    if not pexels_api_key:
+        print("⚠️ Asset Builder: PEXELS_API_KEY not set — using Pillow gradient fallback for all scenes.")
 
     for idx, vp in enumerate(visual_prompts):
         prompt_id = vp["id"]
+        prompt_text = vp.get("prompt", "")
         filename = f"bg_{prompt_id}.jpg"
         filepath = os.path.join(config.ASSETS_DIR, filename)
 
-        palette_idx = idx % len(GRADIENT_PALETTES)
-        top_rgb, bot_rgb = GRADIENT_PALETTES[palette_idx]
+        success = False
 
-        print(f"🎨 Asset Builder: Creating gradient background {prompt_id} (palette {palette_idx + 1})...")
+        # ━━━ LAYER 1: Pexels API ━━━
+        if pexels_api_key:
+            # Extract a clean 2-3 word keyword from the prompt for better Pexels results
+            # Take first 4 words of the prompt as the search keyword
+            keyword_words = prompt_text.strip().split()[:4]
+            keyword = " ".join(keyword_words) if keyword_words else "cinematic"
+            print(f"🖼️ Pexels: Searching for scene {prompt_id} → '{keyword}'...")
 
-        try:
-            img = Image.new('RGB', (1080, 1920))
-            pixels = img.load()
-            for y in range(1920):
-                ratio = y / 1919.0
-                r = int(top_rgb[0] * (1 - ratio) + bot_rgb[0] * ratio)
-                g = int(top_rgb[1] * (1 - ratio) + bot_rgb[1] * ratio)
-                b = int(top_rgb[2] * (1 - ratio) + bot_rgb[2] * ratio)
-                for x in range(1080):
-                    pixels[x, y] = (r, g, b)
-            img.save(filepath, "JPEG", quality=95)
-            print(f"✅ Asset Builder: Gradient background saved: {filename}")
-            saved_paths.append(filepath)
-        except Exception as e:
-            err_msg = f"Failed to generate gradient background for {prompt_id}: {e}"
-            print(f"❌ Asset Builder: {err_msg}")
-            supabase_client.send_telegram_alert(err_msg)
+            photo_url = _pexels_search_photo(keyword, pexels_api_key)
+
+            # If no result, try a shorter 2-word fallback keyword
+            if not photo_url and len(keyword_words) > 2:
+                short_keyword = " ".join(keyword_words[:2])
+                print(f"🖼️ Pexels: Retrying with shorter keyword → '{short_keyword}'...")
+                photo_url = _pexels_search_photo(short_keyword, pexels_api_key)
+
+            if photo_url:
+                try:
+                    img_resp = requests.get(photo_url, timeout=20)
+                    if img_resp.status_code == 200 and len(img_resp.content) > 10000:
+                        # Download and crop/resize to exact 1080x1920 portrait
+                        from io import BytesIO
+                        pil_img = Image.open(BytesIO(img_resp.content)).convert("RGB")
+                        # Smart crop: center-crop to 9:16 ratio then resize
+                        orig_w, orig_h = pil_img.size
+                        target_ratio = 1080 / 1920  # 9:16
+                        orig_ratio = orig_w / orig_h
+                        if orig_ratio > target_ratio:
+                            # Image is wider → crop sides
+                            new_w = int(orig_h * target_ratio)
+                            left = (orig_w - new_w) // 2
+                            pil_img = pil_img.crop((left, 0, left + new_w, orig_h))
+                        else:
+                            # Image is taller → crop top/bottom
+                            new_h = int(orig_w / target_ratio)
+                            top = (orig_h - new_h) // 2
+                            pil_img = pil_img.crop((0, top, orig_w, top + new_h))
+                        pil_img = pil_img.resize((1080, 1920), Image.LANCZOS)
+                        pil_img.save(filepath, "JPEG", quality=92)
+                        print(f"✅ Pexels: Saved scene {prompt_id} background from Pexels stock photo.")
+                        saved_paths.append(filepath)
+                        success = True
+                    else:
+                        print(f"⚠️ Pexels: Photo download returned bad status or small file for scene {prompt_id}.")
+                except Exception as e:
+                    print(f"⚠️ Pexels: Photo processing failed for scene {prompt_id}: {e}")
+
+        # ━━━ LAYER 2: Pillow Gradient Fallback ━━━
+        if not success:
+            print(f"🎨 Asset Builder: Using Pillow gradient fallback for scene {prompt_id} (palette {(idx % 10) + 1})...")
+            try:
+                _make_gradient_fallback(filepath, idx)
+                print(f"✅ Asset Builder: Gradient fallback saved for scene {prompt_id}.")
+                saved_paths.append(filepath)
+            except Exception as e:
+                err_msg = f"Failed to generate gradient fallback for scene {prompt_id}: {e}"
+                print(f"❌ Asset Builder: {err_msg}")
+                supabase_client.send_telegram_alert(err_msg)
 
     return saved_paths
 

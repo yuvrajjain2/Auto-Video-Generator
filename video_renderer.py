@@ -48,7 +48,8 @@ def trigger_github_render(job_id: str) -> bool:
             "youtube_refresh_token": config.YOUTUBE_REFRESH_TOKEN,
             "github_pat": config.GITHUB_PAT,
             "github_repo_owner": config.GITHUB_REPO_OWNER,
-            "github_repo_name": config.GITHUB_REPO_NAME
+            "github_repo_name": config.GITHUB_REPO_NAME,
+            "pexels_api_key": config.PEXELS_API_KEY or ""
         }
     }
     

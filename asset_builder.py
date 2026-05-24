@@ -20,15 +20,23 @@ def generate_background_images(visual_prompts: list) -> list:
     """
     print("🎨 Asset Builder: Generating background images...")
     saved_paths = []
+    import time
+    import random
     
-    for vp in visual_prompts:
+    for idx, vp in enumerate(visual_prompts):
         prompt_id = vp["id"]
         prompt_text = vp["prompt"]
         filename = f"bg_{prompt_id}.jpg"
         filepath = os.path.join(config.ASSETS_DIR, filename)
         
+        # Avoid rate limiting by introducing a 4-second sleep between requests
+        if idx > 0:
+            print("🎨 Asset Builder: Sleeping 4 seconds before next Pollinations AI image generation to avoid rate limits...")
+            time.sleep(4)
+            
         encoded_prompt = urllib.parse.quote(prompt_text)
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true"
+        seed = random.randint(1, 999999)
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1080&height=1920&nologo=true&seed={seed}"
         
         success = False
         print(f"🎨 Asset Builder: Downloading image {prompt_id} from Pollinations AI...")

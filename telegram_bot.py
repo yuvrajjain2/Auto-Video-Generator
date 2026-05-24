@@ -209,7 +209,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         # Approval trigger
         elif data.startswith("approve_"):
             job_id = data.replace("approve_", "")
-            await query.edit_message_text("🚀 Uploading to YouTube Shorts... Please wait.")
+            await query.edit_message_caption("🚀 Uploading to YouTube Shorts... Please wait.")
             
             # Execute publishing in background task
             asyncio.create_task(execute_publishing_pipeline(job_id, query.message))
@@ -218,7 +218,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         elif data.startswith("reject_"):
             job_id = data.replace("reject_", "")
             context.user_data["awaiting_feedback_for_job"] = job_id
-            await query.edit_message_text("💬 *Tell me exactly what to fix:*\nType your modifications directly below.", parse_mode="Markdown")
+            await query.edit_message_caption("💬 *Tell me exactly what to fix:*\nType your modifications directly below.")
             
     except Exception as e:
         err_msg = f"Bot Callback dispatch failure: {e}"

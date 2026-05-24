@@ -31,10 +31,7 @@ jobs:
         run: |
           sudo apt-get install -y fonts-open-sans wget fontconfig
           sudo mkdir -p /usr/share/fonts/truetype/montserrat
-          # Fetch Montserrat Bold font from high-reliability sources (Google Fonts and fallback)
-          sudo wget -q "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Bold.ttf" -O /usr/share/fonts/truetype/montserrat/Montserrat-Bold.ttf || \
-          sudo wget -q "https://github.com/JulietaUlanovskyMonserrat/Montserrat/raw/master/fonts/ttf/Montserrat-Bold.ttf" -O /usr/share/fonts/truetype/montserrat/Montserrat-Bold.ttf
-          # Rebuild font cache
+          sudo wget -q "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-Bold.ttf" -O /usr/share/fonts/truetype/montserrat/Montserrat-Bold.ttf
           fc-cache -f -v
 
       - name: Install Python Dependencies

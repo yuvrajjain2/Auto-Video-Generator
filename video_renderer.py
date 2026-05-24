@@ -71,6 +71,7 @@ def trigger_github_render(job_id: str) -> bool:
 def check_github_action_status(job_id: str) -> bool:
     """
     Polls the GitHub Action run status every 30 seconds for up to 20 minutes.
+    Locks onto the newly dispatched run specifically, avoiding previous runs' confusion.
     """
     print("⏳ Video Renderer: Commencing status polling...")
     url = f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/actions/runs"
@@ -80,23 +81,58 @@ def check_github_action_status(job_id: str) -> bool:
         "Accept": "application/vnd.github+json"
     }
     
+    # 1. Fetch latest run ID before our dispatch is processed
+    previous_latest_id = None
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        if response.status_code == 200:
+            runs = response.json().get('workflow_runs', [])
+            if runs:
+                previous_latest_id = runs[0].get('id')
+                print(f"⏳ Video Renderer: Previous latest run ID was {previous_latest_id}")
+    except Exception as e:
+        print(f"⚠️ Video Renderer: Failed to fetch initial run: {e}")
+
+    # Wait a small buffer for GitHub to register the dispatch
+    print("⏳ Video Renderer: Waiting 8 seconds for GitHub to register the dispatch...")
+    time.sleep(8)
+    
+    target_run_id = None
+    
     # Poll every 30 seconds, max 40 attempts = 20 minutes
     for attempt in range(40):
         print(f"⏳ Video Renderer: Polling attempt {attempt + 1}/40...")
-        time.sleep(30)
         try:
             response = requests.get(url, headers=headers, timeout=20)
             if response.status_code != 200:
                 print(f"⚠️ Video Renderer: Status API returned code {response.status_code}")
+                time.sleep(30)
                 continue
                 
             runs = response.json().get('workflow_runs', [])
             if runs:
-                latest = runs[0]
-                status = latest.get('status')
-                conclusion = latest.get('conclusion')
+                # If we haven't identified our target run yet, look for a new run
+                if not target_run_id:
+                    latest_run = runs[0]
+                    latest_id = latest_run.get('id')
+                    # If it's a new ID, this is our dispatched run!
+                    if latest_id != previous_latest_id:
+                        target_run_id = latest_id
+                        print(f"🎯 Video Renderer: Locked onto target run ID: {target_run_id}")
+                    else:
+                        print("⏳ Video Renderer: Waiting for new run to appear on GitHub...")
+                        time.sleep(15)
+                        continue
                 
-                print(f"🤖 Video Renderer: Remote Workflow status is '{status}' | conclusion is '{conclusion}'")
+                # Once we have the target run, find it in the list and poll its status
+                target_run = next((r for r in runs if r.get('id') == target_run_id), None)
+                if not target_run:
+                    target_run = runs[0]
+                    
+                status = target_run.get('status')
+                conclusion = target_run.get('conclusion')
+                
+                print(f"🤖 Video Renderer: Target Workflow status is '{status}' | conclusion is '{conclusion}'")
                 
                 if status == 'completed':
                     if conclusion == 'success':
@@ -107,6 +143,8 @@ def check_github_action_status(job_id: str) -> bool:
                         return False
         except Exception as e:
             print(f"⚠️ Video Renderer: Polling exception: {e}")
+            
+        time.sleep(30)
             
     print("⏰ Video Renderer: Polling timed out waiting for action to complete.")
     return False

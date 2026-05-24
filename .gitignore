@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+assets/bg_*.jpg
+assets/voice_*.mp3
+assets/logo.png
+assets/whoosh.mp3
+assets/ding.mp3
+assets/bg_music.mp3
+output/

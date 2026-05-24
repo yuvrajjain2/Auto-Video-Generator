@@ -1,0 +1,16 @@
+python-telegram-bot>=20.7
+supabase>=2.3.0
+google-generativeai>=0.4.0
+edge-tts>=6.1.9
+feedparser>=6.0.10
+newspaper3k>=0.2.8
+beautifulsoup4>=4.12.3
+duckduckgo-search>=4.4
+Pillow>=10.2.0
+requests>=2.31.0
+APScheduler>=3.10.4
+google-api-python-client>=2.118.0
+google-auth>=2.27.0
+google-auth-oauthlib>=1.2.0
+lxml>=5.1.0
+lxml-html-clean==0.1.0

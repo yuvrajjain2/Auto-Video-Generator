@@ -1,21 +1,23 @@
 """
 Asset Builder module for the Video automation pipeline.
-Downloads real Pexels stock photos for scene backgrounds using Gemini-generated search queries.
+Downloads real Pexels stock VIDEOS for scene backgrounds using Gemini-generated search_keywords.
 Fetches brand logos via Clearbit/Google, generates TTS voice via edge-tts, and downloads background music.
+FFmpeg solid-color fallback is used only if Pexels Videos API fails for any scene.
 """
 
 import os
+import subprocess
 import requests
 import asyncio
 import edge_tts
-from PIL import Image
 import config
 import supabase_client
 
-def _pexels_fetch_photo(query: str, pexels_api_key: str) -> str | None:
+
+def _pexels_search_video(query: str, pexels_api_key: str) -> str | None:
     """
-    Searches Pexels for a portrait photo matching the query.
-    Returns the highest-quality image URL, or None on failure.
+    Searches Pexels Videos API for a portrait video matching the query.
+    Returns the HD video file URL (or best available), or None on failure.
     """
     try:
         headers = {"Authorization": pexels_api_key}
@@ -25,88 +27,113 @@ def _pexels_fetch_photo(query: str, pexels_api_key: str) -> str | None:
             "size": "large",
             "per_page": 5
         }
-        resp = requests.get("https://api.pexels.com/v1/search", headers=headers, params=params, timeout=15)
+        resp = requests.get(
+            "https://api.pexels.com/videos/search",
+            headers=headers,
+            params=params,
+            timeout=15
+        )
         if resp.status_code == 200:
-            photos = resp.json().get("photos", [])
-            if photos:
-                photo = photos[0]
-                return photo["src"].get("large2x") or photo["src"].get("large")
-        print(f"⚠️ Pexels: Status {resp.status_code} for query '{query}'")
+            videos = resp.json().get("videos", [])
+            if videos:
+                video = videos[0]
+                video_files = video.get("video_files", [])
+                if not video_files:
+                    return None
+                # Prefer HD quality, fallback to first available
+                hd_file = next((f for f in video_files if f.get("quality") == "hd"), None)
+                chosen = hd_file if hd_file else video_files[0]
+                return chosen.get("link")
+        print(f"⚠️ Pexels Videos: Status {resp.status_code} for query '{query}'")
     except Exception as e:
-        print(f"⚠️ Pexels: Exception searching for '{query}': {e}")
+        print(f"⚠️ Pexels Videos: Exception searching for '{query}': {e}")
     return None
 
 
-def _download_and_crop_pexels_photo(photo_url: str, filepath: str) -> bool:
+def _stream_download_video(video_url: str, filepath: str) -> bool:
     """
-    Downloads a Pexels photo URL and center-crops + resizes it to 1080x1920 portrait.
+    Downloads a video from URL using streaming to handle large files.
     Returns True on success, False on failure.
     """
     try:
-        from io import BytesIO
-        img_resp = requests.get(photo_url, timeout=25)
-        if img_resp.status_code != 200 or len(img_resp.content) < 10000:
-            print(f"⚠️ Pexels: Download returned bad status {img_resp.status_code} or file too small.")
-            return False
-        pil_img = Image.open(BytesIO(img_resp.content)).convert("RGB")
-        orig_w, orig_h = pil_img.size
-        target_ratio = 1080 / 1920  # 9:16 portrait
-        orig_ratio = orig_w / orig_h
-        if orig_ratio > target_ratio:
-            # Wider than 9:16 → crop sides
-            new_w = int(orig_h * target_ratio)
-            left = (orig_w - new_w) // 2
-            pil_img = pil_img.crop((left, 0, left + new_w, orig_h))
-        else:
-            # Taller than 9:16 → crop top/bottom
-            new_h = int(orig_w / target_ratio)
-            top = (orig_h - new_h) // 2
-            pil_img = pil_img.crop((0, top, orig_w, top + new_h))
-        pil_img = pil_img.resize((1080, 1920), Image.LANCZOS)
-        pil_img.save(filepath, "JPEG", quality=92)
-        return True
+        with requests.get(video_url, stream=True, timeout=60) as r:
+            if r.status_code != 200:
+                print(f"⚠️ Pexels Videos: Download returned status {r.status_code}.")
+                return False
+            with open(filepath, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+        # Verify file is not empty
+        if os.path.exists(filepath) and os.path.getsize(filepath) > 50000:
+            return True
+        print(f"⚠️ Pexels Videos: Downloaded file is too small or missing.")
+        return False
     except Exception as e:
-        print(f"⚠️ Pexels: Image processing exception: {e}")
+        print(f"⚠️ Pexels Videos: Stream download exception: {e}")
         return False
 
 
-def generate_background_images(visual_prompts: list, brand_keyword: str = "") -> list:
+def _ffmpeg_color_fallback(filepath: str) -> bool:
     """
-    Downloads real 1080x1920 stock photos from Pexels for every scene.
-    Uses the Gemini-generated 'prompt' field directly as the Pexels search query.
-    Multi-level fallback strategy:
-      1. Gemini's exact pexels query (e.g., 'ocean waves aerial')
-      2. First single word of the query
-      3. Brand keyword (topic of the video)
-      4. 'technology' (universal last resort)
-    Raises RuntimeError if ANY scene fails — no silent black screens.
+    Generates a solid dark-blue video using FFmpeg as a last-resort fallback.
+    Returns True on success, False on failure.
     """
-    print("🎨 Asset Builder: Fetching Pexels stock photos for all scenes...")
+    try:
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-f", "lavfi",
+            "-i", "color=c=0x1a1a2e:size=1080x1920:rate=30",
+            "-t", "10",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            filepath
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"✅ Fallback: Generated solid color background video: {filepath}")
+        return True
+    except Exception as e:
+        print(f"❌ Fallback: FFmpeg color video generation failed: {e}")
+        return False
+
+
+def fetch_scene_videos(visual_prompts: list, brand_keyword: str = "") -> list:
+    """
+    Downloads real Pexels portrait stock videos for every scene background.
+    Uses the Gemini-generated 'search_keywords' field as the Pexels search query.
+
+    Multi-level fallback per scene:
+      Level 1 — Gemini's exact search_keywords (e.g., 'person using smartphone')
+      Level 2 — First word of search_keywords only
+      Level 3 — Brand keyword (video topic)
+      Level 4 — 'technology' (universal last resort)
+      Level 5 — FFmpeg solid dark color video (never fails)
+
+    Returns list of file paths [assets/bg_1.mp4, assets/bg_2.mp4, ...]
+    """
+    print("🎬 Asset Builder: Fetching Pexels stock videos for all scenes...")
     saved_paths = []
 
     pexels_api_key = config.PEXELS_API_KEY
     if not pexels_api_key:
-        raise RuntimeError("PEXELS_API_KEY is not set. Cannot generate scene backgrounds.")
+        raise RuntimeError("PEXELS_API_KEY is not set. Cannot fetch scene videos.")
 
     for idx, vp in enumerate(visual_prompts):
         prompt_id = vp["id"]
-        # Gemini now generates prompt as a Pexels search query directly
-        pexels_query = vp.get("prompt", "").strip()
-        filename = f"bg_{prompt_id}.jpg"
+        # Use search_keywords field (new Gemini schema), fallback to prompt for old jobs
+        search_keywords = vp.get("search_keywords", vp.get("prompt", "")).strip()
+        filename = f"bg_{prompt_id}.mp4"
         filepath = os.path.join(config.ASSETS_DIR, filename)
 
-        # Build a smart fallback chain for this scene
-        first_word = pexels_query.split()[0] if pexels_query else ""
-        search_chain = [
-            pexels_query,                           # Level 1: Gemini's exact Pexels query
-            first_word,                             # Level 2: First keyword only
-            brand_keyword if brand_keyword else "",  # Level 3: Video topic/brand
-            "technology",                           # Level 4: Universal fallback
+        # Build smart keyword fallback chain — unique, non-empty, ordered
+        first_word = search_keywords.split()[0] if search_keywords else ""
+        raw_chain = [
+            search_keywords,
+            first_word,
+            brand_keyword.strip() if brand_keyword else "",
+            "technology",
         ]
-        # Remove duplicates and empty strings while preserving order
         seen = set()
         unique_chain = []
-        for kw in search_chain:
+        for kw in raw_chain:
             kw = kw.strip()
             if kw and kw.lower() not in seen:
                 seen.add(kw.lower())
@@ -114,24 +141,31 @@ def generate_background_images(visual_prompts: list, brand_keyword: str = "") ->
 
         success = False
         for level, keyword in enumerate(unique_chain, start=1):
-            print(f"🖼️ Pexels: Scene {prompt_id} — Level {level} search: '{keyword}'...")
-            photo_url = _pexels_fetch_photo(keyword, pexels_api_key)
-            if photo_url:
-                downloaded = _download_and_crop_pexels_photo(photo_url, filepath)
+            print(f"🎬 Pexels Videos: Scene {prompt_id} — Level {level} search: '{keyword}'...")
+            video_url = _pexels_search_video(keyword, pexels_api_key)
+            if video_url:
+                downloaded = _stream_download_video(video_url, filepath)
                 if downloaded:
-                    print(f"✅ Pexels: Scene {prompt_id} saved (query: '{keyword}').")
+                    print(f"✅ Pexels Videos: Scene {prompt_id} downloaded (query: '{keyword}').")
                     saved_paths.append(filepath)
                     success = True
                     break
 
+        # Level 5: FFmpeg color fallback — never raises, always produces a valid video
         if not success:
-            err_msg = f"Pexels: ALL search levels failed for scene {prompt_id}. Cannot generate background."
-            print(f"❌ Asset Builder: {err_msg}")
-            supabase_client.send_telegram_alert(err_msg)
-            raise RuntimeError(err_msg)
+            print(f"⚠️ Pexels Videos: All search levels exhausted for scene {prompt_id}. Using FFmpeg color fallback...")
+            ok = _ffmpeg_color_fallback(filepath)
+            if ok:
+                saved_paths.append(filepath)
+            else:
+                err_msg = f"Scene {prompt_id}: Pexels AND FFmpeg fallback both failed. Cannot continue."
+                print(f"❌ Asset Builder: {err_msg}")
+                supabase_client.send_telegram_alert(err_msg)
+                raise RuntimeError(err_msg)
 
-    print(f"✅ Asset Builder: All {len(saved_paths)} scene backgrounds fetched from Pexels.")
+    print(f"✅ Asset Builder: All {len(saved_paths)} scene videos ready.")
     return saved_paths
+
 
 def fetch_brand_logo(brand_keyword: str, brand_domain: str) -> str:
     """
@@ -140,7 +174,7 @@ def fetch_brand_logo(brand_keyword: str, brand_domain: str) -> str:
     """
     print(f"🏷️ Asset Builder: Resolving brand logo for '{brand_keyword}' ({brand_domain})...")
     filepath = os.path.join(config.ASSETS_DIR, "logo.png")
-    
+
     # Clean up previous logos if present
     if os.path.exists(filepath):
         try:
@@ -187,7 +221,7 @@ def fetch_brand_logo(brand_keyword: str, brand_domain: str) -> str:
         with DDGS() as ddgs:
             query = f"{brand_keyword} official logo PNG transparent background"
             results = list(ddgs.images(query, max_results=3))
-            
+
             for index, result in enumerate(results):
                 try:
                     img_url = result.get('image')
@@ -210,6 +244,7 @@ def fetch_brand_logo(brand_keyword: str, brand_domain: str) -> str:
     print("⚠️ Logo not found via any method. Skipping logo overlay in video.")
     return None
 
+
 async def generate_voiceover(script_lines: list, voice_id: str) -> list:
     """
     Generates vocal voiceover audio files asynchronously using edge-tts.
@@ -217,30 +252,31 @@ async def generate_voiceover(script_lines: list, voice_id: str) -> list:
     """
     print(f"🔊 Asset Builder: Commencing TTS generation using voice: {voice_id}...")
     saved_paths = []
-    
+
     for line in script_lines:
         line_id = line["id"]
         text = line["text"]
         filename = f"voice_{line_id}.mp3"
         filepath = os.path.join(config.ASSETS_DIR, filename)
-        
+
         try:
             print(f"🔊 Asset Builder: Speaking line {line_id}...")
             communicate = edge_tts.Communicate(text=text, voice=voice_id)
             await communicate.save(filepath)
-            
+
             if os.path.exists(filepath) and os.path.getsize(filepath) > 100:
                 print(f"✅ Asset Builder: TTS Voice saved: {filename}")
                 saved_paths.append(filepath)
             else:
                 raise ValueError("Generated file is missing or empty")
-                
+
         except Exception as e:
             err_msg = f"Failed to generate TTS voiceover for line {line_id}: {e}"
             print(f"❌ Asset Builder: {err_msg}")
             supabase_client.send_telegram_alert(err_msg)
-            
+
     return saved_paths
+
 
 def download_background_music() -> str:
     """
@@ -249,12 +285,12 @@ def download_background_music() -> str:
     """
     print("🎵 Asset Builder: Fetching background music...")
     filepath = os.path.join(config.ASSETS_DIR, "bg_music.mp3")
-    
+
     # If file exists, we don't need to re-download
     if os.path.exists(filepath) and os.path.getsize(filepath) > 50000:
         print("✅ Asset Builder: Background music already exists locally.")
         return filepath
-        
+
     url = "https://www.bensound.com/bensound-music/bensound-ukulele.mp3"
     try:
         response = requests.get(url, timeout=30)
@@ -264,20 +300,18 @@ def download_background_music() -> str:
             print("✅ Asset Builder: Background music downloaded and saved.")
             return filepath
         else:
-            print(f"⚠️ Asset Builder: Bensound music URL returned status {response.status_code}. Using fallback method.")
+            print(f"⚠️ Asset Builder: Bensound music URL returned status {response.status_code}.")
     except Exception as e:
-        print(f"⚠️ Asset Builder: Bensound music download failed: {e}. Using fallback method.")
-        
-    # Provide fallbacks: Create a placeholder silence/sine wave if needed or print instructions to copy one
+        print(f"⚠️ Asset Builder: Bensound music download failed: {e}.")
+
     print("⚠️ Asset Builder: Please place a royalty-free 'bg_music.mp3' in your assets/ folder if music overlay is required.")
     return filepath
 
+
 if __name__ == "__main__":
     # Rapid local tests
-    # 1. Test logo resolver
     fetch_brand_logo("Google", "google.com")
-    
-    # 2. Test TTS voice output
+
     async def test_tts():
         lines = [{"id": 99, "text": "This is a beautiful test voiceover powered by edge tts."}]
         await generate_voiceover(lines, "en-US-AndrewNeural")

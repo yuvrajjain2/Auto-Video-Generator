@@ -28,10 +28,12 @@ CRITICAL CONTENT RULES — FOLLOW STRICTLY:
 3. Every single claim in your script must be directly verifiable from the article text.
 4. Extract the brand website domain from the article text if it is mentioned. If not mentioned, set brand_domain as the brand name in lowercase with .com appended.
 5. Do NOT hallucinate features, prices, dates, or statistics that are not in the article.
-6. VISUAL PROMPT RULES: Each visual_prompt must have TWO fields:
-   a) 'prompt': A short, specific Pexels stock photo search query (2-4 words maximum). This will be used to search Pexels.com for a real stock photo. Choose words that will return high-quality, relevant real-world photos. EXAMPLES: 'ocean waves aerial', 'city skyline night', 'scientist laboratory', 'business meeting boardroom', 'mountain sunrise landscape', 'ai robot futuristic', 'smartphone app screen', 'athlete running track'.
-   b) 'scene_description': One sentence describing what should visually appear in this scene.
-   The 'prompt' field is the MOST IMPORTANT — it must be a focused, real-world searchable query that matches the video topic.
+6. For every visual_prompt object, the search_keywords field must be exactly 2-3 simple English words that will be used to search Pexels stock videos. Rules for search_keywords:
+   - GOOD: 'artificial intelligence robot', 'city night lights', 'person using smartphone', 'ocean waves aerial', 'data visualization screen', 'athlete running track'
+   - BAD: 'futuristic holographic neural interface with glowing neon particles' (too long)
+   - BAD: 'AI' (too short)
+   - Maximum 3 words. Minimum 2 words. Real-world searchable. No adjectives like 'cinematic' or 'photorealistic'.
+   - Match the keywords to what is being SPOKEN in that scene of the script.
 
 OUTPUT FORMAT RULES:
 Your output must be a single raw JSON object.
@@ -63,8 +65,8 @@ JSON Schema (follow exactly):
   "visual_prompts": [
     {
       "id": 1,
-      "prompt": "string — 2-4 word Pexels stock photo search query matching this scene topic. Real-world searchable. Example: 'ocean waves aerial'",
-      "scene_description": "string — one sentence describing the visual scene"
+      "search_keywords": "string — exactly 2-3 simple English words for Pexels video search. Example: 'person using smartphone'",
+      "scene_description": "string — one sentence describing what should visually appear in this scene"
     }
   ]
 }
@@ -76,8 +78,8 @@ SCRIPT RULES:
 - First line must hook viewer in first 3 seconds
 - Use energetic fast-paced Shorts style
 - Never mention facts not in the article
-- The 'prompt' in each visual_prompt must be a SPECIFIC, FOCUSED Pexels search query (not a generic AI image prompt)
-- Match each 'prompt' to the actual content being spoken in that scene"""
+- search_keywords must match the topic being SPOKEN in each scene (not generic)
+- Keep search_keywords simple, real-world, and Pexels-searchable (2-3 words max)"""
 
 def clean_and_parse_json(text: str) -> dict:
     """

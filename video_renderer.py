@@ -363,7 +363,7 @@ def render_video(job_id: str):
         
         # Download Assets
         print("🎬 Runner: Pulling visual resources...")
-        bg_paths = asset_builder.generate_background_images(gemini_json["visual_prompts"], brand_keyword=gemini_json.get("brand_keyword", ""))
+        bg_paths = asset_builder.fetch_scene_videos(gemini_json["visual_prompts"], brand_keyword=gemini_json.get("brand_keyword", ""))
         logo_path = asset_builder.fetch_brand_logo(gemini_json["brand_keyword"], gemini_json["brand_domain"])
         
         print("🎬 Runner: Generating voice narration...")
@@ -395,25 +395,31 @@ def render_video(job_id: str):
         print("🎬 Runner: Compiling individual scene video clips...")
         for i in range(len(script_lines)):
             scene_id = i + 1
-            bg_img = bg_paths[i]
+            bg_video = bg_paths[i]       # Pexels MP4 video (portrait stock footage)
             voice_mp3 = voice_paths[i]
-            
-            # Query duration and frames
+
+            # Query voice duration to know how long to trim the scene video
             duration = get_audio_duration(voice_mp3)
-            frames = int(duration * 30)
-            
+
             scene_output = os.path.join(config.ASSETS_DIR, f"scene_{scene_id}.mp4")
-            
-            # Step 1: Base scene rendering with Ken Burns zoom pan
-            # Formula: min(zoom+0.0008,1.3)
-            # Scaling, format and audio muxing
+
+            # Step 1: Compile scene from Pexels video + voice audio
+            # -stream_loop -1  : loops the video so short clips never cut off the audio
+            # scale+crop       : forces exact 1080x1920 portrait regardless of source size
+            # eq=brightness    : darkens slightly so white subtitles are readable
+            # -shortest        : stop when voice audio ends
             cmd = [
-                "ffmpeg", "-y", "-loop", "1", "-i", bg_img, "-i", voice_mp3,
-                "-vf", f"zoompan=z='min(zoom+0.0008,1.3)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-                "-shortest", scene_output
+                "ffmpeg", "-y",
+                "-stream_loop", "-1", "-i", bg_video,
+                "-i", voice_mp3,
+                "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,eq=brightness=-0.06",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k",
+                "-map", "0:v", "-map", "1:a",
+                "-shortest",
+                scene_output
             ]
-            print(f"🎬 Runner: Compiling Scene {scene_id} ({duration:.2f}s)...")
+            print(f"🎬 Runner: Compiling Scene {scene_id} from Pexels video ({duration:.2f}s)...")
             subprocess.run(cmd, check=True)
             
             # Step 3: Logo and Ding Overlay if this is the logo scene and logo.png exists

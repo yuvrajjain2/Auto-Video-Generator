@@ -5,6 +5,7 @@ provide feedback for dynamic script rewrites, and approve and publish rendered v
 """
 
 import os
+import requests
 import logging
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup

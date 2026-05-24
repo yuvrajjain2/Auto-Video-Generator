@@ -105,16 +105,18 @@ def fetch_scene_videos(visual_prompts: list, brand_keyword: str = "") -> list:
       Level 2 — First word of search_keywords only
       Level 3 — Brand keyword (video topic)
       Level 4 — 'technology' (universal last resort)
-      Level 5 — FFmpeg solid dark color video (never fails)
+      Level 5 — FFmpeg solid dark color video (never fails, even if Pexels key is missing)
 
     Returns list of file paths [assets/bg_1.mp4, assets/bg_2.mp4, ...]
+    Pipeline NEVER crashes due to a missing or invalid Pexels key.
     """
     print("🎬 Asset Builder: Fetching Pexels stock videos for all scenes...")
     saved_paths = []
 
-    pexels_api_key = config.PEXELS_API_KEY
+    # Read PEXELS_API_KEY from environment
+    pexels_api_key = os.environ.get("PEXELS_API_KEY", "").strip()
     if not pexels_api_key:
-        raise RuntimeError("PEXELS_API_KEY is not set. Cannot fetch scene videos.")
+        print("⚠️ Asset Builder: PEXELS_API_KEY is not set or empty. Using FFmpeg color fallback for ALL scenes.")
 
     for idx, vp in enumerate(visual_prompts):
         prompt_id = vp["id"]
@@ -140,20 +142,25 @@ def fetch_scene_videos(visual_prompts: list, brand_keyword: str = "") -> list:
                 unique_chain.append(kw)
 
         success = False
-        for level, keyword in enumerate(unique_chain, start=1):
-            print(f"🎬 Pexels Videos: Scene {prompt_id} — Level {level} search: '{keyword}'...")
-            video_url = _pexels_search_video(keyword, pexels_api_key)
-            if video_url:
-                downloaded = _stream_download_video(video_url, filepath)
-                if downloaded:
-                    print(f"✅ Pexels Videos: Scene {prompt_id} downloaded (query: '{keyword}').")
-                    saved_paths.append(filepath)
-                    success = True
-                    break
 
-        # Level 5: FFmpeg color fallback — never raises, always produces a valid video
+        # Only attempt Pexels search if we have a valid API key
+        if pexels_api_key:
+            for level, keyword in enumerate(unique_chain, start=1):
+                print(f"🎬 Pexels Videos: Scene {prompt_id} — Level {level} search: '{keyword}'...")
+                video_url = _pexels_search_video(keyword, pexels_api_key)
+                if video_url:
+                    downloaded = _stream_download_video(video_url, filepath)
+                    if downloaded:
+                        print(f"✅ Pexels Videos: Scene {prompt_id} downloaded (query: '{keyword}').")
+                        saved_paths.append(filepath)
+                        success = True
+                        break
+        else:
+            print(f"⚠️ Pexels Videos: No API key — skipping search for scene {prompt_id}, using color fallback.")
+
+        # FFmpeg color fallback — runs if Pexels failed OR key is missing — never crashes pipeline
         if not success:
-            print(f"⚠️ Pexels Videos: All search levels exhausted for scene {prompt_id}. Using FFmpeg color fallback...")
+            print(f"🎨 Asset Builder: Using FFmpeg dark color fallback for scene {prompt_id}...")
             ok = _ffmpeg_color_fallback(filepath)
             if ok:
                 saved_paths.append(filepath)

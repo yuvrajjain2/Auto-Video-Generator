@@ -76,7 +76,7 @@ jobs:
           GITHUB_PAT: ${{ inputs.github_pat }}
           GITHUB_REPO_OWNER: ${{ inputs.github_repo_owner }}
           GITHUB_REPO_NAME: ${{ inputs.github_repo_name }}
-          PEXELS_API_KEY: ${{ inputs.pexels_api_key }}
+          PEXELS_API_KEY: ${{ inputs.pexels_api_key || secrets.PEXELS_API_KEY }}
           JOB_ID: ${{ inputs.job_id }}
         run: python video_renderer.py --job_id $JOB_ID
 

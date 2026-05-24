@@ -274,24 +274,30 @@ def compile_whoosh_sound():
     Downloads or programmatically ensures a whoosh sound transition effect exists in assets.
     """
     whoosh_path = os.path.join(config.ASSETS_DIR, "whoosh.mp3")
-    if os.path.exists(whoosh_path) and os.path.getsize(whoosh_path) > 1000:
+    if os.path.exists(whoosh_path) and os.path.getsize(whoosh_path) > 5000:
         return whoosh_path
         
     url = "https://freesound.org/data/previews/415/415209_5121236-lq.mp3"  # Standard small public whoosh
     try:
         print("🎵 Asset Builder: Downloading whoosh sound effect...")
         resp = requests.get(url, timeout=15)
-        if resp.status_code == 200:
+        if resp.status_code == 200 and len(resp.content) > 5000:
             with open(whoosh_path, "wb") as f:
                 f.write(resp.content)
             print("✅ Asset Builder: Whoosh sound effect saved.")
             return whoosh_path
     except Exception as e:
-        print(f"⚠️ Asset Builder: Whoosh sound download failed: {e}. Writing silent fallback.")
+        print(f"⚠️ Asset Builder: Whoosh sound download failed: {e}. Generating silent fallback via FFmpeg...")
         
-    # Write a silent fallback to avoid breaking FFmpeg
-    with open(whoosh_path, "wb") as f:
-        f.write(b"\x00" * 2000)
+    # Generate a valid silent MP3 fallback via FFmpeg to prevent crashes
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:c=mono", "-t", "1",
+            "-c:a", "libmp3lame", whoosh_path
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        print("✅ Asset Builder: Programmatically generated silent whoosh.mp3 fallback.")
+    except Exception as fe:
+        print(f"❌ Asset Builder: Failed to generate silent whoosh.mp3 fallback: {fe}")
     return whoosh_path
 
 def compile_ding_sound():
@@ -299,24 +305,30 @@ def compile_ding_sound():
     Downloads or programmatically ensures a ding sound effect exists in assets.
     """
     ding_path = os.path.join(config.ASSETS_DIR, "ding.mp3")
-    if os.path.exists(ding_path) and os.path.getsize(ding_path) > 1000:
+    if os.path.exists(ding_path) and os.path.getsize(ding_path) > 5000:
         return ding_path
         
     url = "https://freesound.org/data/previews/338/338692_5739343-lq.mp3"  # Small public ding sound
     try:
         print("🎵 Asset Builder: Downloading ding sound effect...")
         resp = requests.get(url, timeout=15)
-        if resp.status_code == 200:
+        if resp.status_code == 200 and len(resp.content) > 5000:
             with open(ding_path, "wb") as f:
                 f.write(resp.content)
             print("✅ Asset Builder: Ding sound effect saved.")
             return ding_path
     except Exception as e:
-        print(f"⚠️ Asset Builder: Ding sound download failed: {e}. Writing silent fallback.")
+        print(f"⚠️ Asset Builder: Ding sound download failed: {e}. Generating silent fallback via FFmpeg...")
         
-    # Write silent fallback
-    with open(ding_path, "wb") as f:
-        f.write(b"\x00" * 2000)
+    # Generate a valid silent MP3 fallback via FFmpeg to prevent crashes
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:c=mono", "-t", "1",
+            "-c:a", "libmp3lame", ding_path
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        print("✅ Asset Builder: Programmatically generated silent ding.mp3 fallback.")
+    except Exception as fe:
+        print(f"❌ Asset Builder: Failed to generate silent ding.mp3 fallback: {fe}")
     return ding_path
 
 def render_video(job_id: str):
@@ -405,29 +417,42 @@ def render_video(job_id: str):
             
             # Step 3: Logo and Ding Overlay if this is the logo scene and logo.png exists
             if i == logo_scene_idx and logo_path and os.path.exists(logo_path):
-                print(f"🎬 Runner: Injecting Brand Logo and Ding audio into Scene {scene_id}...")
+                print(f"🎬 Runner: Injecting Brand Logo overlay into Scene {scene_id}...")
                 overlayed_scene = os.path.join(config.ASSETS_DIR, f"scene_logo_{scene_id}.mp4")
                 
                 # Apply 0.5s fade in and fade out on logo overlay
                 fade_in_end = 0.5
                 fade_out_start = duration - 0.5
                 
-                # Filtergraph: Overlay logo at W-100:H-250 (bottom-right area)
-                # Adds the Ding sound at st=0.1
+                # Filtergraph: Overlay logo at W-120:H-250 (bottom-right area)
                 logo_filter = (
                     f"[1:v]scale=80:80,fade=in:st=0:d=0.5:alpha=1,fade=out:st={fade_out_start}:d=0.5:alpha=1[logo];"
                     f"[0:v][logo]overlay=W-120:H-250[v]"
                 )
                 
-                cmd_logo = [
-                    "ffmpeg", "-y", "-i", scene_output, "-i", logo_path, "-i", ding_path,
-                    "-filter_complex", logo_filter,
-                    "-map", "[v]",
-                    # Mix vocal audio and Ding together
-                    "-filter_complex", "[0:a][2:a]amix=inputs=2:duration=first[a]",
-                    "-map", "[a]",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", overlayed_scene
-                ]
+                # Verify if ding path exists and is a valid audio file (>5000 bytes)
+                has_ding = ding_path and os.path.exists(ding_path) and os.path.getsize(ding_path) > 5000
+                
+                if has_ding:
+                    print(f"🎬 Runner: Mixing Ding sound effect into Scene {scene_id}...")
+                    cmd_logo = [
+                        "ffmpeg", "-y", "-i", scene_output, "-i", logo_path, "-i", ding_path,
+                        "-filter_complex", logo_filter,
+                        "-map", "[v]",
+                        # Mix vocal audio and Ding together
+                        "-filter_complex", "[0:a][2:a]amix=inputs=2:duration=first[a]",
+                        "-map", "[a]",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", overlayed_scene
+                    ]
+                else:
+                    print(f"⚠️ Runner: Ding sound is unavailable or invalid. Adding brand logo without audio overlay in Scene {scene_id}...")
+                    cmd_logo = [
+                        "ffmpeg", "-y", "-i", scene_output, "-i", logo_path,
+                        "-filter_complex", logo_filter,
+                        "-map", "[v]",
+                        "-map", "0:a",  # keep original vocal audio unchanged
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "copy", overlayed_scene
+                    ]
                 subprocess.run(cmd_logo, check=True)
                 scene_output = overlayed_scene
                 
@@ -466,20 +491,30 @@ def render_video(job_id: str):
         print("🎬 Runner: Mixing background music with vocal sidechain compressor ducking...")
         ducked_audio = os.path.join(config.ASSETS_DIR, "ducked_audio.mp3")
         
-        # sidechaincompress sidechaining music [1:a] using vocal [0:a]
-        # Threshold: 0.15, Duck volume: 0.15 voice, 0.80 silence
-        audio_filter = (
-            f"[1:a]aloop=loop=-1:size=2e+9[loop_music];"
-            f"[loop_music]atrim=0:{total_video_duration}[music];"
-            f"[music][0:a]sidechaincompress=threshold=0.12:ratio=15:attack=100:release=450[comp]"
-        )
+        # Check if background music is available and valid (>10000 bytes)
+        has_bg_music = bg_music_path and os.path.exists(bg_music_path) and os.path.getsize(bg_music_path) > 10000
         
-        cmd_audio = [
-            "ffmpeg", "-y", "-i", concatenated_voice, "-i", bg_music_path,
-            "-filter_complex", audio_filter, "-map", "[comp]",
-            "-c:a", "libmp3lame", "-b:a", "192k", ducked_audio
-        ]
-        subprocess.run(cmd_audio, check=True)
+        if has_bg_music:
+            # sidechaincompress sidechaining music [1:a] using vocal [0:a]
+            # Threshold: 0.12, Duck volume: 0.15 voice, 0.80 silence
+            audio_filter = (
+                f"[1:a]aloop=loop=-1:size=2e+9[loop_music];"
+                f"[loop_music]atrim=0:{total_video_duration}[music];"
+                f"[music][0:a]sidechaincompress=threshold=0.12:ratio=15:attack=100:release=450[comp]"
+            )
+            cmd_audio = [
+                "ffmpeg", "-y", "-i", concatenated_voice, "-i", bg_music_path,
+                "-filter_complex", audio_filter, "-map", "[comp]",
+                "-c:a", "libmp3lame", "-b:a", "192k", ducked_audio
+            ]
+            subprocess.run(cmd_audio, check=True)
+        else:
+            print("⚠️ Runner: Background music is unavailable or invalid. Using raw voice track without music ducking...")
+            # Convert raw concatenated voice to ducked_audio format directly
+            subprocess.run([
+                "ffmpeg", "-y", "-i", concatenated_voice,
+                "-c:a", "libmp3lame", "-b:a", "192k", ducked_audio
+            ], check=True)
         
         # Combine final video and audio
         muxed_file = os.path.join(config.ASSETS_DIR, "muxed.mp4")

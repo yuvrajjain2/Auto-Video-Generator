@@ -283,6 +283,9 @@ async def execute_generation_pipeline(job_id: str, bot_message, feedback: str = 
         # Set job status to rendering
         supabase_client.update_job(job_id=job_id, status="rendering")
         
+        # Query latest run ID before triggering workflow to guarantee absolute lock-on capability
+        previous_latest_id = video_renderer.get_latest_run_id()
+        
         # Phase 5: Trigger GitHub actions remotely
         success = video_renderer.trigger_github_render(job_id)
         if not success:
@@ -294,7 +297,12 @@ async def execute_generation_pipeline(job_id: str, bot_message, feedback: str = 
         
         loop = asyncio.get_event_loop()
         # Polling runs in executors thread to prevent main loop blocks
-        render_success = await loop.run_in_executor(None, video_renderer.check_github_action_status, job_id)
+        render_success = await loop.run_in_executor(
+            None,
+            video_renderer.check_github_action_status,
+            job_id,
+            previous_latest_id
+        )
         
         if not render_success:
             await bot_message.reply_text("❌ Error: Video compilation failed or timed out on remote runner.")

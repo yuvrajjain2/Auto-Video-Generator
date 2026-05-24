@@ -68,7 +68,27 @@ def trigger_github_render(job_id: str) -> bool:
         supabase_client.send_telegram_alert(err_msg)
         return False
 
-def check_github_action_status(job_id: str) -> bool:
+def get_latest_run_id() -> int:
+    """
+    Fetches the ID of the absolute latest workflow run in the repository.
+    Used before dispatching to eliminate the race condition.
+    """
+    url = f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/actions/runs"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_PAT}",
+        "Accept": "application/vnd.github+json"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        if response.status_code == 200:
+            runs = response.json().get('workflow_runs', [])
+            if runs:
+                return runs[0].get('id')
+    except Exception as e:
+        print(f"⚠️ Video Renderer: Failed to fetch latest run ID: {e}")
+    return None
+
+def check_github_action_status(job_id: str, previous_latest_id: int = None) -> bool:
     """
     Polls the GitHub Action run status every 30 seconds for up to 20 minutes.
     Locks onto the newly dispatched run specifically, avoiding previous runs' confusion.
@@ -81,17 +101,17 @@ def check_github_action_status(job_id: str) -> bool:
         "Accept": "application/vnd.github+json"
     }
     
-    # 1. Fetch latest run ID before our dispatch is processed
-    previous_latest_id = None
-    try:
-        response = requests.get(url, headers=headers, timeout=20)
-        if response.status_code == 200:
-            runs = response.json().get('workflow_runs', [])
-            if runs:
-                previous_latest_id = runs[0].get('id')
-                print(f"⏳ Video Renderer: Previous latest run ID was {previous_latest_id}")
-    except Exception as e:
-        print(f"⚠️ Video Renderer: Failed to fetch initial run: {e}")
+    # 1. If not provided, fetch latest run ID before our dispatch is processed
+    if previous_latest_id is None:
+        try:
+            response = requests.get(url, headers=headers, timeout=20)
+            if response.status_code == 200:
+                runs = response.json().get('workflow_runs', [])
+                if runs:
+                    previous_latest_id = runs[0].get('id')
+                    print(f"⏳ Video Renderer: Previous latest run ID was {previous_latest_id}")
+        except Exception as e:
+            print(f"⚠️ Video Renderer: Failed to fetch initial run: {e}")
 
     # Wait a small buffer for GitHub to register the dispatch
     print("⏳ Video Renderer: Waiting 8 seconds for GitHub to register the dispatch...")

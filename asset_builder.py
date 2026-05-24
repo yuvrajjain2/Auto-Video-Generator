@@ -36,7 +36,7 @@ def generate_background_images(visual_prompts: list) -> list:
         # 3 Retry Attempts
         for attempt in range(1, 4):
             try:
-                response = requests.get(url, timeout=60)
+                response = requests.get(url, timeout=20)
                 if response.status_code == 200 and len(response.content) > 10000:
                     with open(filepath, "wb") as f:
                         f.write(response.content)
@@ -109,6 +109,10 @@ def fetch_brand_logo(brand_keyword: str, brand_domain: str) -> str:
 
     # ━━━ LAYER 3: DuckDuckGo Image Search ━━━
     try:
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print("🔌 Logo Layer 3: Running inside GitHub Actions. Skipping DuckDuckGo search to prevent remote rate-limits/hangs.")
+            return None
+
         print(f"🔌 Logo Layer 3: Querying DuckDuckGo Image search for '{brand_keyword}'...")
         from duckduckgo_search import DDGS
         with DDGS() as ddgs:

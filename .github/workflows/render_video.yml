@@ -6,6 +6,28 @@ on:
       job_id:
         description: 'The UUID of the job to compile and render'
         required: true
+      supabase_url:
+        required: true
+      supabase_key:
+        required: true
+      telegram_bot_token:
+        required: true
+      telegram_chat_id:
+        required: true
+      gemini_api_key:
+        required: true
+      youtube_client_id:
+        required: true
+      youtube_client_secret:
+        required: true
+      youtube_refresh_token:
+        required: true
+      github_pat:
+        required: true
+      github_repo_owner:
+        required: true
+      github_repo_name:
+        required: true
 
 jobs:
   render:
@@ -41,15 +63,17 @@ jobs:
 
       - name: Run FFmpeg Render Pipeline
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
+          SUPABASE_URL: ${{ inputs.supabase_url }}
+          SUPABASE_KEY: ${{ inputs.supabase_key }}
+          TELEGRAM_BOT_TOKEN: ${{ inputs.telegram_bot_token }}
+          TELEGRAM_CHAT_ID: ${{ inputs.telegram_chat_id }}
+          GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+          YOUTUBE_CLIENT_ID: ${{ inputs.youtube_client_id }}
+          YOUTUBE_CLIENT_SECRET: ${{ inputs.youtube_client_secret }}
+          YOUTUBE_REFRESH_TOKEN: ${{ inputs.youtube_refresh_token }}
+          GITHUB_PAT: ${{ inputs.github_pat }}
+          GITHUB_REPO_OWNER: ${{ inputs.github_repo_owner }}
+          GITHUB_REPO_NAME: ${{ inputs.github_repo_name }}
           JOB_ID: ${{ inputs.job_id }}
         run: python video_renderer.py --job_id $JOB_ID
 

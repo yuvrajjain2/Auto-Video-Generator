@@ -23,6 +23,7 @@ GITHUB_REPO_NAME = config.GITHUB_REPO_NAME
 def trigger_github_render(job_id: str) -> bool:
     """
     Triggers the GitHub Actions render workflow remotely via REST API.
+    All secrets are passed dynamically from the local application to bypass GitHub secrets setup.
     """
     print(f"🚀 Video Renderer: Dispatching remote GitHub Action workflow for job {job_id}...")
     url = f"https://api.github.com/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/actions/workflows/render_video.yml/dispatches"
@@ -36,7 +37,18 @@ def trigger_github_render(job_id: str) -> bool:
     payload = {
         "ref": "main",
         "inputs": {
-            "job_id": str(job_id)
+            "job_id": str(job_id),
+            "supabase_url": config.SUPABASE_URL,
+            "supabase_key": config.SUPABASE_KEY,
+            "telegram_bot_token": config.TELEGRAM_BOT_TOKEN,
+            "telegram_chat_id": config.TELEGRAM_CHAT_ID,
+            "gemini_api_key": config.GEMINI_API_KEY,
+            "youtube_client_id": config.YOUTUBE_CLIENT_ID,
+            "youtube_client_secret": config.YOUTUBE_CLIENT_SECRET,
+            "youtube_refresh_token": config.YOUTUBE_REFRESH_TOKEN,
+            "github_pat": config.GITHUB_PAT,
+            "github_repo_owner": config.GITHUB_REPO_OWNER,
+            "github_repo_name": config.GITHUB_REPO_NAME
         }
     }
     
